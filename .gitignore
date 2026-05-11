@@ -1,0 +1,16 @@
+# Python / venv
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Local env and Agno state
+.env
+.agno_memory.sqlite
+
+# OS / editor
+.DS_Store

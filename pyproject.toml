@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agno-game-dev-crew"
+version = "0.1.0"
+description = "Agno Game Dev Crew — OpenRouter, AuditFlow, AgentOS"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "agno[os]>=2.6.4,<2.7",
+  "openai>=1.0.0",
+  "fastapi>=0.115.0",
+  "uvicorn>=0.32.0",
+  "python-dotenv>=1.0.0",
+  "sqlalchemy>=2.0.0",
+]
+
+[project.scripts]
+game-dev-crew = "game_dev_crew.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["game_dev_crew*"]
+
+[tool.setuptools.package-data]
+game_dev_crew = ["instructions/*.md"]
