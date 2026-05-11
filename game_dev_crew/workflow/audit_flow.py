@@ -213,6 +213,7 @@ def build_audit_workflow(
     cap = max_iterations if max_iterations is not None else audit_flow_max_iterations()
     executor = make_audit_iteration_executor(root, cap)
     return Workflow(
+        id="audit-flow",
         name="AuditFlow",
         description="Auditor → specialists → senior developer → reviewer, with rework loop",
         steps=[

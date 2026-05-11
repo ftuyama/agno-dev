@@ -1,0 +1,38 @@
+# Served via GET /config — chat.quick_prompts appear in AgentOS / Studio chat UI.
+# Keys must match agent `id`, team `id`, and workflow `id` in code.
+chat:
+  quick_prompts:
+    auditor:
+      - "Audit risks under src/engine/ and summarize top findings."
+      - "Review src/campaigns/calvario/scenes/ for consistency and risk."
+      - "What should we verify before shipping the next scene batch?"
+    storytelling:
+      - "Improve pacing and branching for the current act."
+      - "Suggest PT-BR player-facing lines for a tense beat."
+      - "Flag narrative gaps vs engine-supported choices."
+    ui_ux:
+      - "Review combat UI readability and hierarchy."
+      - "Suggest CSS token or layout fixes for accessibility."
+      - "Compare two screens for cognitive load."
+    game_design:
+      - "Align a mechanic proposal with the engine schema."
+      - "Review progression and difficulty for act 1."
+      - "List design risks for the next milestone."
+    senior_developer:
+      - "Draft a minimal TypeScript change plan for this bug."
+      - "Produce a textual patch for the proposed fix."
+      - "Outline test cases for the new behavior."
+    reviewer:
+      - "Run a quality gate on the last senior output (checklist)."
+      - "Should we approve or request another rework iteration?"
+      - "Summarize blockers before merge."
+    game-dev-specialists:
+      - "Route: storytelling vs UI vs design for this feature idea."
+      - "Which specialist should own this player-facing change?"
+    game-dev-crew:
+      - "Coordinate a full pass on engine vs UI boundaries."
+      - "Run a high-level audit scope for the calvario campaign."
+    audit-flow:
+      - "Audit the game codebase; start with src/engine/ and calvario scenes."
+      - "Focus audit on accessibility and UI copy."
+      - "Deep dive act1 scenes only; cap rework iterations if needed."

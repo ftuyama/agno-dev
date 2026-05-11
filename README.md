@@ -19,7 +19,7 @@ From this directory:
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -e .
 cp .env.example .env
 # Edit .env: set OPENROUTER_API_KEY (required for non dry-run)

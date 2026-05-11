@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from agno.os import AgentOS
 
 from game_dev_crew.config import load_env, make_agent_db, repo_root
 from game_dev_crew.crew.agents import build_agents
 from game_dev_crew.crew.teams import build_game_dev_crew_team, build_specialists_team
 from game_dev_crew.workflow.audit_flow import build_audit_workflow
+
+_AGENT_OS_CONFIG = Path(__file__).resolve().parent / "agent_os_config.yaml"
 
 
 def build_app():
@@ -28,6 +32,7 @@ def build_app():
         agents=agents,
         teams=teams,
         workflows=workflows,
+        config=str(_AGENT_OS_CONFIG),
     )
     return agent_os.get_app()
 

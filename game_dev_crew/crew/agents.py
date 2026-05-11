@@ -26,6 +26,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
     auditor = Agent(
         id="auditor",
         name="Auditor",
+        description="Static analysis and codebase risk review for the game repo (REPO_ROOT).",
         role="Static analysis and codebase risk review for the game repo (REPO_ROOT)",
         model=model,
         instructions=_inst("auditor"),
@@ -37,6 +38,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
     storytelling = Agent(
         id="storytelling",
         name="Storytelling specialist",
+        description="Narrative, pacing, branching, PT-BR player-facing prose for calvario.",
         role="Narrative, pacing, branching, PT-BR player-facing prose for calvario",
         model=model,
         instructions=_inst("storytelling"),
@@ -47,6 +49,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
     ui_ux = Agent(
         id="ui_ux",
         name="UI/UX game specialist",
+        description="Readability, UI hierarchy, CSS tokens and accessibility for the IF UI.",
         role="Readability, UI hierarchy, CSS tokens and accessibility for the IF UI",
         model=model,
         instructions=_inst("ui_ux"),
@@ -57,6 +60,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
     game_design = Agent(
         id="game_design",
         name="Game designer specialist",
+        description="Mechanics aligned with engine schema, combat, progression.",
         role="Mechanics aligned with engine schema, combat, progression",
         model=model,
         instructions=_inst("game_design"),
@@ -67,6 +71,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
     senior_developer = Agent(
         id="senior_developer",
         name="Senior developer",
+        description="TypeScript implementation plans and textual patches.",
         role="TypeScript implementation plans and textual patches",
         model=model,
         instructions=_inst("senior_developer"),
@@ -78,6 +83,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
     reviewer = Agent(
         id="reviewer",
         name="Reviewer",
+        description="Quality gate with parseable checklist and optional validate:scenes tool.",
         role="Quality gate with parseable checklist and optional validate:scenes tool",
         model=model,
         instructions=_inst("reviewer"),

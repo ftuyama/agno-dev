@@ -25,4 +25,4 @@ where = ["."]
 include = ["game_dev_crew*"]
 
 [tool.setuptools.package-data]
-game_dev_crew = ["instructions/*.md"]
+game_dev_crew = ["instructions/*.md", "agent_os_config.yaml"]

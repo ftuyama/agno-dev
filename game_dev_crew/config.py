@@ -30,7 +30,7 @@ def repo_root() -> Path:
     load_env()
     raw = os.environ.get("REPO_ROOT", "").strip()
     if raw:
-        return Path(raw).resolve()
+        return Path(raw).expanduser().resolve()
     return _AGNO_DIR.resolve()
 
 

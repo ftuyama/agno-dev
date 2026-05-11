@@ -23,6 +23,7 @@ def build_specialists_team(repo_root: Path) -> Team:
     return Team(
         id="game-dev-specialists",
         name="Game Dev Specialists",
+        description="Route-only team: storytelling, UI/UX, and game design specialists.",
         model=model,
         mode=TeamMode.route,
         members=[
@@ -46,6 +47,7 @@ def build_game_dev_crew_team(repo_root: Path) -> Team:
     return Team(
         id="game-dev-crew",
         name="Game Dev Crew",
+        description="Full crew: auditor, specialists, senior developer, and reviewer.",
         model=model,
         mode=TeamMode.coordinate,
         members=[
