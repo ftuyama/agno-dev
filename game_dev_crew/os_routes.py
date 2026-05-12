@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from agno.db.base import BaseDb, ComponentType as DbComponentType
 from agno.os.auth import get_authentication_dependency
@@ -17,16 +17,45 @@ from agno.os.schema import (
     PaginationInfo,
     UnauthenticatedResponse,
     ValidationErrorResponse,
+    WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
 from agno.utils.log import log_error
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.routing import APIRoute
+from urllib.parse import urlencode
 
 from game_dev_crew.config import load_env, make_agent_db
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+
+
+def attach_registry_query_normalize(app: "FastAPI") -> None:
+    """Normalize ``resource_type`` on ``GET /registry`` so bad clients still validate.
+
+    Agno expects lowercase enum values (``tool``, ``model``, ``db``, …). A trailing
+    comma (e.g. ``resource_type=model,``) or uppercase (``MODEL``) yields 422 and
+    looks like an empty API in some clients.
+    """
+
+    @app.middleware("http")
+    async def _normalize_registry_resource_type(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if request.method != "GET":
+            return await call_next(request)
+        path = request.url.path.rstrip("/") or "/"
+        if path != "/registry":
+            return await call_next(request)
+        raw = request.query_params.get("resource_type")
+        if raw is None:
+            return await call_next(request)
+        fixed = raw.strip().rstrip(",").lower()
+        if fixed == raw:
+            return await call_next(request)
+        request.scope["query_string"] = urlencode(
+            [(k, fixed if k == "resource_type" else v) for k, v in request.query_params.multi_items()]
+        ).encode("utf-8")
+        return await call_next(request)
 
 
 def _list_components_slice(
@@ -113,6 +142,103 @@ def patch_agentos_components_list(app: "FastAPI", db: BaseDb) -> None:
         except Exception as e:
             log_error(f"Error listing components: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error") from e
+
+    app.include_router(router)
+
+
+def patch_agentos_workflows_list(app: "FastAPI", agent_os: Any) -> None:
+    """Replace AgentOS ``GET /workflows`` so DB-synced workflows are not listed twice.
+
+    Upstream Agno appends every row from ``get_workflows(db=...)`` after ``os.workflows``.
+    This project persists the same workflow definitions to SQLite (Studio / sync-components),
+    so clients saw duplicate ids. We skip DB entries whose id is already on the OS instance
+    and copy ``current_version`` / ``stage`` from the DB object onto the in-memory summary.
+    """
+    kept: list[Any] = []
+    for route in app.router.routes:
+        if (
+            isinstance(route, APIRoute)
+            and route.name == "get_workflows"
+            and route.path == "/workflows"
+            and route.methods is not None
+            and "GET" in route.methods
+        ):
+            continue
+        kept.append(route)
+    if len(kept) == len(app.router.routes):
+        return
+
+    app.router.routes = kept
+    settings = AgnoAPISettings()
+
+    router = APIRouter(
+        dependencies=[Depends(get_authentication_dependency(settings))],
+        tags=["Workflows"],
+        responses={
+            400: {"description": "Bad Request", "model": BadRequestResponse},
+            401: {"description": "Unauthorized", "model": UnauthenticatedResponse},
+            404: {"description": "Not Found", "model": NotFoundResponse},
+            422: {"description": "Validation Error", "model": ValidationErrorResponse},
+            500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
+        },
+    )
+
+    @router.get(
+        "/workflows",
+        response_model=List[WorkflowSummaryResponse],
+        response_model_exclude_none=True,
+        name="get_workflows",
+        operation_id="get_workflows",
+        summary="List All Workflows",
+    )
+    async def get_workflows(request: Request) -> List[WorkflowSummaryResponse]:
+        if getattr(request.state, "authorization_enabled", False):
+            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+
+            accessible_ids = get_accessible_resources(request, "workflows")
+            if not accessible_ids:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
+            accessible_workflows = filter_resources_by_access(request, agent_os.workflows or [], "workflows")
+        else:
+            accessible_workflows = agent_os.workflows or []
+
+        summaries: List[WorkflowSummaryResponse] = []
+        id_to_index: dict[str, int] = {}
+        if accessible_workflows:
+            for workflow in accessible_workflows:
+                row = WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False)
+                summaries.append(row)
+                if row.id:
+                    id_to_index[row.id] = len(summaries) - 1
+
+        if agent_os.db and isinstance(agent_os.db, BaseDb):
+            from agno.workflow.workflow import get_workflows as load_workflows_from_db
+
+            for db_workflow in load_workflows_from_db(db=agent_os.db, registry=agent_os.registry):
+                wid = getattr(db_workflow, "id", None) or ""
+                try:
+                    if wid and wid in id_to_index:
+                        idx = id_to_index[wid]
+                        base = summaries[idx]
+                        v = getattr(db_workflow, "_version", None)
+                        s = getattr(db_workflow, "_stage", None)
+                        db_id = db_workflow.db.id if db_workflow.db else None
+                        summaries[idx] = base.model_copy(
+                            update={
+                                "db_id": db_id or base.db_id,
+                                "current_version": v if v is not None else base.current_version,
+                                "stage": s if s is not None else base.stage,
+                            }
+                        )
+                        continue
+                    summaries.append(
+                        WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True)
+                    )
+                except Exception as exc:
+                    log_error(f"Error converting workflow {wid or 'unknown'} to response: {exc}")
+                    continue
+
+        return summaries
 
     app.include_router(router)
 

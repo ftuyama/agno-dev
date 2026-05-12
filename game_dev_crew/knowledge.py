@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 import sys
 import warnings
@@ -10,6 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from game_dev_crew.config import load_env
+
+_LOG = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
@@ -89,6 +93,7 @@ class _SeedDoc:
     title: str
     description: str
     metadata: dict[str, Any]
+    version: int = 1
 
 
 _SEED_DOCS: tuple[_SeedDoc, ...] = (
@@ -142,17 +147,60 @@ _SEED_DOCS: tuple[_SeedDoc, ...] = (
 )
 
 
+def _file_fingerprint(path: Path) -> str:
+    """First 12 chars of sha256(file bytes); changes whenever the seed file changes."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+
+
+def _expected_content_hash(name: str, description: str, path: Path) -> str:
+    """Mirror of ``Knowledge._build_content_hash`` for the (name, description, path) case.
+
+    Kept in sync with agno/knowledge/knowledge.py — used only as a cheap pre-check
+    so we can skip ``Knowledge.insert`` when the seed is already up to date.
+    """
+    return hashlib.sha256(":".join([name, description, str(path)]).encode()).hexdigest()
+
+
 def seed_default_knowledge(knowledge: "Knowledge") -> None:
-    """Index packaged seed markdown with per-document name, description, and metadata for Studio."""
+    """Index packaged seed markdown only when the seed (file or version) actually changed.
+
+    Each seed gets a revision marker — ``[rev v{spec.version}-{file_fingerprint}]`` — appended
+    to its description. The marker participates in Agno's ``content_hash`` so:
+
+    * unchanged file + unchanged ``spec.version`` → ``skip_if_exists=True`` short-circuits
+      and we avoid the re-embed loop seen in the startup logs;
+    * file edit OR ``spec.version`` bump → revision marker changes, hash differs, we delete
+      stale vectors for that ``seed_id`` and re-insert exactly once.
+    """
+    vector_db = getattr(knowledge, "vector_db", None)
+    content_hash_exists = getattr(vector_db, "content_hash_exists", None)
+
     for spec in _SEED_DOCS:
         path = _SEED_DIR / spec.filename
         if not path.is_file():
             continue
+
+        revision = f"v{spec.version}-{_file_fingerprint(path)}"
+        description = f"{spec.description} [rev {revision}]"
+        seed_id = spec.metadata.get("seed_id")
+
+        if callable(content_hash_exists) and content_hash_exists(
+            _expected_content_hash(spec.title, description, path)
+        ):
+            _LOG.debug("Knowledge seed %s already up to date (rev %s); skipping.", seed_id, revision)
+            continue
+
+        if seed_id:
+            try:
+                knowledge.remove_vectors_by_metadata({"seed_id": seed_id})
+            except Exception as exc:  # noqa: BLE001 — best-effort cleanup of orphan revs
+                _LOG.debug("Could not prune stale vectors for seed %s: %s", seed_id, exc)
+
         knowledge.insert(
             name=spec.title,
-            description=spec.description,
+            description=description,
             path=str(path),
-            metadata=spec.metadata,
+            metadata={**spec.metadata, "rev": revision},
             upsert=True,
-            skip_if_exists=False,
+            skip_if_exists=True,
         )
