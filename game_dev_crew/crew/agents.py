@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from agno.agent import Agent
+from agno.knowledge.protocol import KnowledgeProtocol
 
 from game_dev_crew.config import load_instruction, make_agent_db, make_model
+from game_dev_crew.crew.meta import AGENTS_PY_METADATA
 from game_dev_crew.tools.policy import auditor_tools, reviewer_tools, senior_developer_tools
 
 
@@ -15,13 +17,19 @@ def _inst(name: str) -> list[str]:
     return [load_instruction(name)]
 
 
-def build_agents(repo_root: Path) -> dict[str, Agent]:
+def build_agents(repo_root: Path, game_knowledge: Optional[KnowledgeProtocol] = None) -> dict[str, Agent]:
     root = repo_root.resolve()
     model = make_model()
     db = make_agent_db()
     mem_kw: dict[str, Any] = {}
     if db is not None:
         mem_kw = {"db": db, "update_memory_on_run": True}
+
+    auditor_kw: dict[str, Any] = dict(mem_kw)
+    if game_knowledge is not None:
+        auditor_kw["knowledge"] = game_knowledge
+        auditor_kw["search_knowledge"] = True
+        auditor_kw["add_knowledge_to_context"] = False
 
     auditor = Agent(
         id="auditor",
@@ -32,7 +40,8 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
         instructions=_inst("auditor"),
         tools=auditor_tools(root),
         markdown=True,
-        **mem_kw,
+        metadata=dict(AGENTS_PY_METADATA),
+        **auditor_kw,
     )
 
     storytelling = Agent(
@@ -43,6 +52,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
         model=model,
         instructions=_inst("storytelling"),
         markdown=True,
+        metadata=dict(AGENTS_PY_METADATA),
         **mem_kw,
     )
 
@@ -54,6 +64,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
         model=model,
         instructions=_inst("ui_ux"),
         markdown=True,
+        metadata=dict(AGENTS_PY_METADATA),
         **mem_kw,
     )
 
@@ -65,6 +76,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
         model=model,
         instructions=_inst("game_design"),
         markdown=True,
+        metadata=dict(AGENTS_PY_METADATA),
         **mem_kw,
     )
 
@@ -77,6 +89,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
         instructions=_inst("senior_developer"),
         tools=senior_developer_tools(root),
         markdown=True,
+        metadata=dict(AGENTS_PY_METADATA),
         **mem_kw,
     )
 
@@ -89,6 +102,7 @@ def build_agents(repo_root: Path) -> dict[str, Agent]:
         instructions=_inst("reviewer"),
         tools=reviewer_tools(root),
         markdown=True,
+        metadata=dict(AGENTS_PY_METADATA),
         **mem_kw,
     )
 

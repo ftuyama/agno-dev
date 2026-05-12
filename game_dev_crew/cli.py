@@ -6,7 +6,13 @@ import argparse
 import os
 import sys
 
-from game_dev_crew.config import audit_flow_max_iterations, load_env, repo_root
+from game_dev_crew.config import (
+    audit_flow_max_iterations,
+    load_env,
+    make_agent_db,
+    memory_sqlite_file,
+    repo_root,
+)
 from game_dev_crew.crew.teams import build_game_dev_crew_team, build_specialists_team
 from game_dev_crew.workflow.audit_flow import build_audit_workflow, format_audit_cli_report, run_audit_flow
 
@@ -55,6 +61,123 @@ def cmd_specialists(args: argparse.Namespace) -> None:
     team.print_response(args.prompt, stream=bool(args.stream))
 
 
+def cmd_sqlite_status(args: argparse.Namespace) -> None:
+    """Print which SQLite file is used and row counts (definitions vs chat sessions)."""
+    import sqlite3
+
+    import game_dev_crew.config as cfg
+
+    load_env()
+    path = memory_sqlite_file()
+    raw_mem = os.environ.get("AGNO_MEMORY_DB", "")
+    raw_sqlite_path = os.environ.get("AGNO_MEMORY_SQLITE_PATH", "")
+
+    print("game_dev_crew.config loaded from:", cfg.__file__)
+    print("Package data dir (_AGNO_DIR):", cfg._AGNO_DIR)
+    print("AGNO_MEMORY_DB (effective env):", repr(raw_mem.strip() or "(empty → default sqlite)"))
+    print("AGNO_MEMORY_SQLITE_PATH (env):", repr(raw_sqlite_path.strip() or "(unset → project .agno_memory.sqlite)"))
+    print("Resolved main SQLite file:", path)
+    db_inst = make_agent_db()
+    print("make_agent_db():", type(db_inst).__name__ if db_inst else None)
+
+    if not path.is_file():
+        print("\nFile does not exist yet. Run: game-dev-crew sync-components")
+        print("If you use a non-editable install, paths are relative to site-packages — set AGNO_MEMORY_SQLITE_PATH to an absolute path.")
+        return
+
+    con = sqlite3.connect(path)
+    try:
+        tables = [
+            ("agno_components", "saved agent/team/workflow definitions (agent.save / team.save / workflow.save)"),
+            ("agno_component_configs", "versioned JSON configs for those components"),
+            ("agno_sessions", "chat / run sessions (fills after you talk to an agent)"),
+            ("agno_memories", "user memories when enabled"),
+        ]
+        print("\nRow counts:")
+        for table, hint in tables:
+            try:
+                n = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            except sqlite3.OperationalError:
+                n = "(no such table)"
+            print(f"  {table}: {n}")
+            print(f"      → {hint}")
+        rows = con.execute(
+            "SELECT component_id, component_type FROM agno_components ORDER BY component_type, component_id"
+        ).fetchall()
+        if rows:
+            print("\nagno_components rows:")
+            for cid, ctype in rows:
+                print(f"    {ctype:12}  {cid}")
+        print(
+            "\nNote: Agno Studio may only list agents you created in the Studio UI. "
+            "Code-defined crew agents are in the agno_components table (above)."
+        )
+    finally:
+        con.close()
+
+
+def cmd_sync_components(args: argparse.Namespace) -> None:
+    """Persist agents, teams, and AuditFlow into SQLite (same logic as AgentOS startup)."""
+    from game_dev_crew.component_persistence import persist_code_defined_components
+    from game_dev_crew.crew.agents import build_agents
+    from game_dev_crew.crew.teams import build_game_dev_crew_team, build_specialists_team
+    from game_dev_crew.knowledge import build_game_dev_knowledge, seed_default_knowledge
+    from game_dev_crew.workflow.audit_flow import build_audit_workflow
+
+    load_env()
+    root = repo_root()
+    db = make_agent_db()
+    if db is None:
+        _die(
+            "SQLite do AgentOS está desligado (make_agent_db() == None).\n"
+            "- No .env: AGNO_MEMORY_DB=sqlite ou omita (default sqlite).\n"
+            "- Se a shell exporta AGNO_MEMORY_DB=none, faça: unset AGNO_MEMORY_DB\n"
+            "  (python-dotenv não sobrepõe variáveis já definidas na shell).\n"
+            f"- Caminho do ficheiro quando ativo: {memory_sqlite_file()}"
+        )
+    kb = build_game_dev_knowledge(db)
+    if kb is not None:
+        seed_default_knowledge(kb)
+    agents = list(build_agents(root, game_knowledge=kb).values())
+    teams = [
+        build_specialists_team(root, game_knowledge=kb),
+        build_game_dev_crew_team(root, game_knowledge=kb),
+    ]
+    workflows = [build_audit_workflow(repo_root_arg=root, game_knowledge=kb)]
+    if not persist_code_defined_components(
+        root,
+        db=db,
+        agents=agents,
+        teams=teams,
+        workflow=workflows[0],
+    ):
+        _die("persist_code_defined_components falhou (BaseDb ausente).")
+    path = memory_sqlite_file()
+    print("Componentes gravados em:", path)
+    import sqlite3
+
+    con = sqlite3.connect(str(path))
+    try:
+        agents_db = con.execute(
+            "SELECT component_id FROM agno_components "
+            "WHERE component_type = 'agent' AND deleted_at IS NULL ORDER BY component_id"
+        ).fetchall()
+        teams_db = con.execute(
+            "SELECT component_id FROM agno_components "
+            "WHERE component_type = 'team' AND deleted_at IS NULL ORDER BY component_id"
+        ).fetchall()
+        wf_db = con.execute(
+            "SELECT component_id FROM agno_components "
+            "WHERE component_type = 'workflow' AND deleted_at IS NULL ORDER BY component_id"
+        ).fetchall()
+    finally:
+        con.close()
+    print("Verification from table agno_components (do not confuse with agno_sessions):")
+    print("  agents:   ", ", ".join(r[0] for r in agents_db) or "(none)")
+    print("  teams:    ", ", ".join(r[0] for r in teams_db) or "(none)")
+    print("  workflows:", ", ".join(r[0] for r in wf_db) or "(none)")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     """Run AgentOS (FastAPI) — same agents/teams/workflow as the CLI."""
     import uvicorn
@@ -66,6 +189,30 @@ def cmd_serve(args: argparse.Namespace) -> None:
             "REPO_ROOT must point at the game repo (directory with package.json). "
             f"Got: {root}"
         )
+
+    if make_agent_db() is None:
+        print(
+            "game-dev-crew serve: SQLite do AgentOS está desligado — definições de agentes/equipas "
+            "não serão gravadas (AGNO_MEMORY_DB=none na shell ou no .env; load_dotenv não sobrepõe a shell).",
+            file=sys.stderr,
+        )
+        print(f"                  Caminho usado quando o SQLite está ativo: {memory_sqlite_file()}", file=sys.stderr)
+
+    connect_host = "127.0.0.1" if args.host in ("0.0.0.0", "::", "[::]") else args.host
+    base_url = f"http://{connect_host}:{args.port}"
+    print(
+        "\n--- Agno Studio (os.agno.com) ---\n"
+        f"• Add OS → Local → {base_url} (while this server is running).\n"
+        "• The page https://os.agno.com/studio/agents lists **cloud account** agents (e.g. “Test”), "
+        "not your Game Dev Crew from this repo.\n"
+        "• Use your **connected local OS** in Studio (chat / run) to reach auditor, storytelling, … "
+        "from /config on this server.\n"
+        "• GET /components lists all rows in agno_components (agents, teams, workflows). "
+        "GET /system/db-components is the same data without AgentOS auth (debug).\n"
+        f"• Check: curl -s {base_url}/config | python3 -c "
+        "\"import json,sys; d=json.load(sys.stdin); print([a.get('id') for a in d.get('agents',[])])\"\n",
+        file=sys.stderr,
+    )
 
     uvicorn.run(
         "game_dev_crew.agent_os_app:app",
@@ -125,6 +272,18 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--port", type=int, default=8000, help="Port (default 8000)")
     sv.add_argument("--reload", action="store_true", help="Dev auto-reload on code changes")
     sv.set_defaults(func=cmd_serve)
+
+    sy = sub.add_parser(
+        "sync-components",
+        help="Gravar agentes, equipas e AuditFlow no SQLite (sem levantar o servidor)",
+    )
+    sy.set_defaults(func=cmd_sync_components)
+
+    st = sub.add_parser(
+        "sqlite-status",
+        help="Mostrar ficheiro SQLite resolvido e contagens (definições vs sessões)",
+    )
+    st.set_defaults(func=cmd_sqlite_status)
 
     return p
 

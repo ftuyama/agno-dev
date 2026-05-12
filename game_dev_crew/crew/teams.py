@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
+from agno.knowledge.protocol import KnowledgeProtocol
 from agno.team import Team
 from agno.team.mode import TeamMode
 
 from game_dev_crew.config import load_instruction, make_agent_db, make_model
 from game_dev_crew.crew.agents import build_agents
+from game_dev_crew.crew.meta import TEAMS_PY_METADATA
 
 
-def build_specialists_team(repo_root: Path) -> Team:
+def build_specialists_team(repo_root: Path, game_knowledge: Optional[KnowledgeProtocol] = None) -> Team:
     """Route-only team for storytelling + UI/UX + game design."""
-    agents = build_agents(repo_root)
+    agents = build_agents(repo_root, game_knowledge=game_knowledge)
     model = make_model()
     db = make_agent_db()
     mem_kw: dict[str, Any] = {}
@@ -32,13 +34,14 @@ def build_specialists_team(repo_root: Path) -> Team:
             agents["game_design"],
         ],
         instructions=[load_instruction("team_leader")],
+        metadata=dict(TEAMS_PY_METADATA),
         **mem_kw,
     )
 
 
-def build_game_dev_crew_team(repo_root: Path) -> Team:
+def build_game_dev_crew_team(repo_root: Path, game_knowledge: Optional[KnowledgeProtocol] = None) -> Team:
     """Full crew as a coordinated team (leader delegates)."""
-    agents = build_agents(repo_root)
+    agents = build_agents(repo_root, game_knowledge=game_knowledge)
     model = make_model()
     db = make_agent_db()
     mem_kw: dict[str, Any] = {}
@@ -59,5 +62,6 @@ def build_game_dev_crew_team(repo_root: Path) -> Team:
             agents["reviewer"],
         ],
         instructions=[load_instruction("team_leader")],
+        metadata=dict(TEAMS_PY_METADATA),
         **mem_kw,
     )

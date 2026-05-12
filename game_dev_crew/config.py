@@ -69,18 +69,26 @@ def _sqlite_memory_db_path() -> Path:
     return db_path.resolve()
 
 
-def make_agent_db() -> Optional["BaseDb"]:
-    """Shared Agno SQLite ``BaseDb`` for sessions and user memories, or ``None`` when disabled.
+def memory_sqlite_file() -> Path:
+    """Resolved path of the main Agno SQLite file (``AGNO_MEMORY_SQLITE_PATH`` or project default)."""
+    return _sqlite_memory_db_path()
 
-    Set ``AGNO_MEMORY_DB`` to ``sqlite`` to enable (default file: ``.agno_memory.sqlite`` in project root).
-    Use ``none`` or leave unset to disable.
+
+def make_agent_db() -> Optional["BaseDb"]:
+    """Shared Agno SQLite ``BaseDb`` for sessions, memories, workflows, and AgentOS Studio.
+
+    When ``AGNO_MEMORY_DB`` is unset or ``sqlite`` (default), uses ``.agno_memory.sqlite`` under
+    the project root unless ``AGNO_MEMORY_SQLITE_PATH`` is set. Set ``AGNO_MEMORY_DB`` to
+    ``none`` / ``off`` / ``false`` / ``0`` to disable persistence entirely.
     """
     global _agent_db_instance, _agent_db_fingerprint
     load_env()
     raw = os.environ.get("AGNO_MEMORY_DB", "").strip().lower()
-    if raw in ("", "none", "off", "false", "0"):
+    if raw in ("none", "off", "false", "0"):
         return None
-    if raw != "sqlite":
+    if raw in ("", "sqlite"):
+        pass  # default + explicit sqlite
+    else:
         raise ValueError(
             "Invalid AGNO_MEMORY_DB={!r}; use none or sqlite (see .env.example).".format(raw)
         )

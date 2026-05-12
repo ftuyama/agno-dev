@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 
+from agno.knowledge.protocol import KnowledgeProtocol
 from agno.workflow import Workflow
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 
-from game_dev_crew.config import audit_flow_max_iterations, repo_root
+from game_dev_crew.config import audit_flow_max_iterations, make_agent_db, repo_root
 from game_dev_crew.crew.agents import build_agents
 from game_dev_crew.workflow.reviewer_parse import parse_reviewer_output
 
@@ -67,8 +68,10 @@ def format_audit_cli_report(workflow_run: Any) -> str:
     return "".join(parts)
 
 
-def make_audit_iteration_executor(repo_root: Path, max_iterations: int):
-    agents = build_agents(repo_root)
+def make_audit_iteration_executor(
+    repo_root: Path, max_iterations: int, game_knowledge: Optional[KnowledgeProtocol] = None
+):
+    agents = build_agents(repo_root, game_knowledge=game_knowledge)
     specialist_keys = ("storytelling", "ui_ux", "game_design")
 
     def audit_iteration(step_input: StepInput, session_state: dict[str, Any]) -> StepOutput:
@@ -208,14 +211,23 @@ def end_loop_on_approval(iteration_results: list[Any]) -> bool:
 def build_audit_workflow(
     repo_root_arg: Path | None = None,
     max_iterations: int | None = None,
+    db: Any | None = None,
+    game_knowledge: Optional[KnowledgeProtocol] = None,
 ) -> Workflow:
     root = (repo_root_arg or repo_root()).resolve()
     cap = max_iterations if max_iterations is not None else audit_flow_max_iterations()
-    executor = make_audit_iteration_executor(root, cap)
+    executor = make_audit_iteration_executor(root, cap, game_knowledge=game_knowledge)
+    wf_db = make_agent_db() if db is None else db
+    wf_kw: dict[str, Any] = {}
+    if wf_db is not None:
+        wf_kw["db"] = wf_db
+        wf_kw["add_workflow_history_to_steps"] = True
+        wf_kw["num_history_runs"] = 3
     return Workflow(
         id="audit-flow",
         name="AuditFlow",
         description="Auditor → specialists → senior developer → reviewer, with rework loop",
+        **wf_kw,
         steps=[
             Loop(
                 name="audit_rework_loop",

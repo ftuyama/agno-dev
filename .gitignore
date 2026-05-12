@@ -11,6 +11,8 @@ build/
 # Local env and Agno state
 .env
 .agno_memory.sqlite
+.agno_knowledge.sqlite
+.agno_lancedb/
 
 # OS / editor
 .DS_Store
