@@ -1,0 +1,32 @@
+---
+description: Agno (Game Dev Crew) — Python, OpenRouter, AuditFlow workflow, and conventions
+alwaysApply: true
+---
+
+# Agno — Game Dev Crew
+
+Separate **Python** project from the game: dependencies in [`pyproject.toml`](pyproject.toml). Do not mix Agno/OpenRouter dependencies into the game repo’s `package.json`.
+
+## Layout (`game_dev_crew/`)
+
+| Area | Path |
+|------|------|
+| Config + model | `config.py` (`repo_root`, `load_instruction`, `make_model`) |
+| CLI | `cli.py` — `game-dev-crew` command |
+| Agents / teams | `crew/agents.py`, `crew/teams.py` |
+| AuditFlow + Reviewer parse | `workflow/audit_flow.py`, `workflow/reviewer_parse.py` |
+| Scene generation workflow | `workflow/scene_generation_flow.py` |
+| Allowlisted tools | `tools/repo_read.py`, `tools/repo_glob.py`, `tools/allowlisted_shell.py`, `tools/validate_scenes.py`, `tools/policy.py` |
+| Exportable prompts | `instructions/*.md` — **only** source of text for `Agent(instructions=…)` |
+
+## Conventions
+
+- **Game repo:** `REPO_ROOT` (root with `package.json`). The engine and campaign live in the game repo (e.g. `src/`); the crew only reads/validates via tools.
+- **Instructions:** keep **real paths** in `.md` files to reduce hallucination. Scene files and IDs: **English**; player-facing copy: **PT-BR** — applies to *content* the agents discuss, not Python file names.
+- **Tool safety:** follow [`tools/policy.py`](game_dev_crew/tools/policy.py) — `glob` + `read_repo_file` are read-only; `execute_command`/`bash` only allowlisted `npm run` (`ENABLE_REPO_SHELL_TOOLS`); `validate:scenes` on **all** agents only with `ENABLE_VALIDATE_SCENES_TOOL`; no file writes by agents through these tools.
+- **AuditFlow:** the `- ❌ [owner]` format and `STATUS: APPROVED` in [`instructions/reviewer.md`](game_dev_crew/instructions/reviewer.md) align with `reviewer_parse.py`; changing one side means aligning the other and the loop in `audit_flow.py`.
+- **KISS:** minimal, focused changes.
+
+## Quick reference
+
+Setup and env: [`README.md`](README.md), [`.env.example`](.env.example). Repo workflow for new agents: [`.cursor/commands/new-game-dev-agent.md`](.cursor/commands/new-game-dev-agent.md). Agno docs: [docs.agno.com](https://docs.agno.com).
