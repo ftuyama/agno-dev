@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 import sys
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from game_dev_crew.config import load_env
 
@@ -17,7 +18,6 @@ if TYPE_CHECKING:
 _CREW_PKG = Path(__file__).resolve().parent
 _AGNO_DIR = _CREW_PKG.parent
 _SEED_DIR = _CREW_PKG / "knowledge_seed"
-
 KNOWLEDGE_NAME = "Game Dev Crew KB"
 LANCEDB_TABLE = "game_dev_crew_kb"
 
@@ -72,7 +72,7 @@ def build_game_dev_knowledge(agent_db: Optional["BaseDb"]) -> Optional["Knowledg
 
     return Knowledge(
         name=KNOWLEDGE_NAME,
-        description="Crew overview and docs for AgentOS Knowledge + Auditor search.",
+        description="Crew overview, Silent Dungeon premise/scene/mechanics seeds, and AgentOS Knowledge + Auditor search.",
         vector_db=LanceDb(
             uri=str(_lancedb_dir()),
             table_name=LANCEDB_TABLE,
@@ -83,9 +83,76 @@ def build_game_dev_knowledge(agent_db: Optional["BaseDb"]) -> Optional["Knowledg
     )
 
 
+@dataclass(frozen=True)
+class _SeedDoc:
+    filename: str
+    title: str
+    description: str
+    metadata: dict[str, Any]
+
+
+_SEED_DOCS: tuple[_SeedDoc, ...] = (
+    _SeedDoc(
+        "crew_overview.md",
+        "Game Dev Crew — overview",
+        "Crew roles (Auditor, specialists, senior, reviewer), AuditFlow loop, REPO_ROOT conventions, "
+        "and how this KB is used in AgentOS Studio and optional Auditor RAG.",
+        {
+            "seed_id": "crew_overview",
+            "kind": "crew_onboarding",
+            "content_language": "en",
+        },
+    ),
+    _SeedDoc(
+        "silent_dungeon_premise.md",
+        "Silent Dungeon — premise (seed)",
+        "Pitch, tone, EN vs PT-BR split for IDs vs player copy, content warning, and where authoritative "
+        "game schema lives under REPO_ROOT.",
+        {
+            "seed_id": "silent_dungeon_premise",
+            "kind": "game_seed",
+            "game": "silent_dungeon",
+            "content_language": "en",
+        },
+    ),
+    _SeedDoc(
+        "silent_dungeon_scene_workflow.md",
+        "Silent Dungeon — scene workflow (seed)",
+        "Scene layout under calvario, schema authority, branching/choices, and npm validation hooks; "
+        "points agents at REPO_ROOT tools for ground truth.",
+        {
+            "seed_id": "silent_dungeon_scene_workflow",
+            "kind": "game_seed",
+            "game": "silent_dungeon",
+            "content_language": "en",
+        },
+    ),
+    _SeedDoc(
+        "silent_dungeon_world_and_mechanics.md",
+        "Silent Dungeon — world & mechanics (seed)",
+        "Campaign acts, mechanics summary, and PT-BR support text; always subordinate to "
+        "REPO_ROOT/src/engine/schema and combat code.",
+        {
+            "seed_id": "silent_dungeon_world_and_mechanics",
+            "kind": "game_seed",
+            "game": "silent_dungeon",
+            "content_language": "mixed",
+        },
+    ),
+)
+
+
 def seed_default_knowledge(knowledge: "Knowledge") -> None:
-    """Idempotently index packaged seed markdown into the vector store."""
-    overview = _SEED_DIR / "crew_overview.md"
-    if not overview.is_file():
-        return
-    knowledge.insert(path=str(overview), skip_if_exists=True)
+    """Index packaged seed markdown with per-document name, description, and metadata for Studio."""
+    for spec in _SEED_DOCS:
+        path = _SEED_DIR / spec.filename
+        if not path.is_file():
+            continue
+        knowledge.insert(
+            name=spec.title,
+            description=spec.description,
+            path=str(path),
+            metadata=spec.metadata,
+            upsert=True,
+            skip_if_exists=False,
+        )

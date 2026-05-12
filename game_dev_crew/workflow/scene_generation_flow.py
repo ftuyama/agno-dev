@@ -22,6 +22,12 @@ from game_dev_crew.workflow.audit_flow import _commit_agent_writes, _iter_nested
 from game_dev_crew.workflow.git_isolation import create_audit_branch
 
 _RUN_LABEL = "scene-generation"
+_SCENE_GEN_SILENT_DUNGEON_HINT = (
+    "When **REPO_ROOT** is *Silent Dungeon* / **Calvário** (e.g. `src/campaigns/calvario/` exists), "
+    "align batches with that tree and authoritative contracts under `src/engine/schema/`; "
+    "if `REPO_ROOT/.cursor/skills/create-scenes/SKILL.md` exists, follow it—still verify with "
+    "`glob` / `read_repo_file` on the live tree."
+)
 
 
 def _prior_context(step_input: StepInput, limit: int = 12000) -> str:
@@ -48,6 +54,7 @@ def make_scene_generation_executors(
             "Propose a concrete batch: scene IDs (English), filenames under "
             "`src/campaigns/<campaign>/scenes/`, beats, branching, and PT-BR tone. "
             "Use `glob` / `read_repo_file` to align with the existing campaign tree.",
+            _SCENE_GEN_SILENT_DUNGEON_HINT,
         ]
         if prior:
             blocks.append("## Prior workflow steps\n" + prior)
@@ -79,6 +86,7 @@ def make_scene_generation_executors(
                 "## Storytelling outline\n```\n" + story[:20000] + "\n```",
                 "Review mechanics, progression, and engine/schema fit. "
                 "Call out risks; use repo tools to verify how choices map to engine types.",
+                _SCENE_GEN_SILENT_DUNGEON_HINT,
             ]
             + ([f"## Prior steps\n{prior}"] if prior else []),
         )
@@ -111,6 +119,7 @@ def make_scene_generation_executors(
                 "Implement the new scenes: create or edit markdown + YAML under the campaign "
                 "`scenes/` tree using `write_repo_file` / `apply_patch`. "
                 "After edits, run `npm run test` and, if scenes changed, `run_validate_scenes`.",
+                _SCENE_GEN_SILENT_DUNGEON_HINT,
             ]
             + ([f"## Prior steps\n{prior}"] if prior else []),
         )
