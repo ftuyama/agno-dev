@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING, Any, List, Optional
 
@@ -56,6 +57,47 @@ def attach_registry_query_normalize(app: "FastAPI") -> None:
             [(k, fixed if k == "resource_type" else v) for k, v in request.query_params.multi_items()]
         ).encode("utf-8")
         return await call_next(request)
+
+
+def _merge_db_workflow_rows_into_summaries(
+    agent_os: Any,
+    summaries: List[WorkflowSummaryResponse],
+) -> List[WorkflowSummaryResponse]:
+    """Load DB-backed workflows and merge into summaries (sync; safe for ``asyncio.to_thread``)."""
+    from agno.workflow.workflow import get_workflows as load_workflows_from_db
+
+    out = list(summaries)
+    id_to_index: dict[str, int] = {}
+    for i, row in enumerate(out):
+        if row.id:
+            id_to_index[row.id] = i
+
+    if not (agent_os.db and isinstance(agent_os.db, BaseDb)):
+        return out
+
+    for db_workflow in load_workflows_from_db(db=agent_os.db, registry=agent_os.registry):
+        wid = getattr(db_workflow, "id", None) or ""
+        try:
+            if wid and wid in id_to_index:
+                idx = id_to_index[wid]
+                base = out[idx]
+                v = getattr(db_workflow, "_version", None)
+                s = getattr(db_workflow, "_stage", None)
+                db_id = db_workflow.db.id if db_workflow.db else None
+                out[idx] = base.model_copy(
+                    update={
+                        "db_id": db_id or base.db_id,
+                        "current_version": v if v is not None else base.current_version,
+                        "stage": s if s is not None else base.stage,
+                    }
+                )
+                continue
+            out.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
+        except Exception as exc:
+            log_error(f"Error converting workflow {wid or 'unknown'} to response: {exc}")
+            continue
+
+    return out
 
 
 def _list_components_slice(
@@ -125,8 +167,12 @@ def patch_agentos_components_list(app: "FastAPI", db: BaseDb) -> None:
     ) -> PaginatedResponse[ComponentResponse]:
         try:
             ct = DbComponentType(component_type.value) if component_type else None
-            components, total_count, search_ms = _list_components_slice(
-                db, component_type=ct, page=page, limit=limit
+            components, total_count, search_ms = await asyncio.to_thread(
+                _list_components_slice,
+                db,
+                component_type=ct,
+                page=page,
+                limit=limit,
             )
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
             return PaginatedResponse(
@@ -203,40 +249,13 @@ def patch_agentos_workflows_list(app: "FastAPI", agent_os: Any) -> None:
             accessible_workflows = agent_os.workflows or []
 
         summaries: List[WorkflowSummaryResponse] = []
-        id_to_index: dict[str, int] = {}
         if accessible_workflows:
             for workflow in accessible_workflows:
                 row = WorkflowSummaryResponse.from_workflow(workflow=workflow, is_component=False)
                 summaries.append(row)
-                if row.id:
-                    id_to_index[row.id] = len(summaries) - 1
 
         if agent_os.db and isinstance(agent_os.db, BaseDb):
-            from agno.workflow.workflow import get_workflows as load_workflows_from_db
-
-            for db_workflow in load_workflows_from_db(db=agent_os.db, registry=agent_os.registry):
-                wid = getattr(db_workflow, "id", None) or ""
-                try:
-                    if wid and wid in id_to_index:
-                        idx = id_to_index[wid]
-                        base = summaries[idx]
-                        v = getattr(db_workflow, "_version", None)
-                        s = getattr(db_workflow, "_stage", None)
-                        db_id = db_workflow.db.id if db_workflow.db else None
-                        summaries[idx] = base.model_copy(
-                            update={
-                                "db_id": db_id or base.db_id,
-                                "current_version": v if v is not None else base.current_version,
-                                "stage": s if s is not None else base.stage,
-                            }
-                        )
-                        continue
-                    summaries.append(
-                        WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True)
-                    )
-                except Exception as exc:
-                    log_error(f"Error converting workflow {wid or 'unknown'} to response: {exc}")
-                    continue
+            summaries = await asyncio.to_thread(_merge_db_workflow_rows_into_summaries, agent_os, summaries)
 
         return summaries
 

@@ -36,7 +36,7 @@ SUBCOMMANDS: tuple[SubcommandSpec, ...] = (
     SubcommandSpec(
         name="serve",
         help="Run AgentOS API (FastAPI) for agents, teams, AuditFlow, and Scene generation",
-        example="game-dev-crew serve --host 127.0.0.1 --port 8000 --reload",
+        example="game-dev-crew serve --host 127.0.0.1 --port 8000 --workers 2",
     ),
     SubcommandSpec(
         name="sync-components",

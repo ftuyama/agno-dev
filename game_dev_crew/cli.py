@@ -324,12 +324,23 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
     connect_host = "127.0.0.1" if args.host in ("0.0.0.0", "::", "[::]") else args.host
     base_url = f"http://{connect_host}:{args.port}"
+
+    workers = max(1, int(args.workers))
+    if args.reload and workers > 1:
+        print(
+            "game-dev-crew serve: --reload uses a single worker; ignoring --workers > 1.",
+            file=sys.stderr,
+        )
+        workers = 1
+
     trace_hint = ""
     if tracing_enabled() and db_serve is not None:
         trace_hint = f"• Traces: GET {base_url}/traces\n"
+    workers_hint = f"• Uvicorn workers: {workers} (other workers can serve /components while one runs a workflow)\n"
     print(
         "\n--- Agno Studio ---\n"
         f"• Local OS: {base_url}\n"
+        f"{workers_hint}"
         "• Cloud https://os.agno.com/studio/agents is account agents, not this crew.\n"
         "• GET /components and GET /system/db-components list saved definitions.\n"
         f"{trace_hint}"
@@ -338,13 +349,16 @@ def cmd_serve(args: argparse.Namespace) -> None:
         file=sys.stderr,
     )
 
-    uvicorn.run(
-        "game_dev_crew.agent_os_app:app",
-        host=args.host,
-        port=args.port,
-        factory=False,
-        reload=args.reload,
-    )
+    run_kw: dict[str, Any] = {
+        "app": "game_dev_crew.agent_os_app:app",
+        "host": args.host,
+        "port": args.port,
+        "factory": False,
+        "reload": args.reload,
+    }
+    if workers > 1:
+        run_kw["workers"] = workers
+    uvicorn.run(**run_kw)
 
 
 def cmd_crew(args: argparse.Namespace) -> None:
@@ -409,6 +423,17 @@ def build_parser() -> argparse.ArgumentParser:
     sv = sub.add_parser("serve", help=subcommand_help("serve"))
     sv.add_argument("--host", default="127.0.0.1", help="Bind address (default 127.0.0.1)")
     sv.add_argument("--port", type=int, default=8000, help="Port (default 8000)")
+    sv.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        metavar="N",
+        help=(
+            "Uvicorn worker processes (default 2). Extra workers keep GET /components and other "
+            "routes responsive while a heavy workflow blocks one worker. Use 1 to minimize memory. "
+            "Ignored when --reload is set."
+        ),
+    )
     sv.add_argument("--reload", action="store_true", help="Dev auto-reload on code changes")
     sv.set_defaults(func=cmd_serve)
 
