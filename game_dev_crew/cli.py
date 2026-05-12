@@ -6,13 +6,16 @@ import argparse
 import os
 import sys
 
+from game_dev_crew.cli_commands import SUBCOMMANDS, subcommand_help
 from game_dev_crew.config import (
     audit_flow_max_iterations,
     load_env,
     make_agent_db,
     memory_sqlite_file,
     repo_root,
+    tracing_enabled,
 )
+from game_dev_crew.tracing import maybe_setup_tracing
 from game_dev_crew.crew.teams import build_game_dev_crew_team, build_specialists_team
 from game_dev_crew.workflow.audit_flow import build_audit_workflow, format_audit_cli_report, run_audit_flow
 
@@ -20,6 +23,16 @@ from game_dev_crew.workflow.audit_flow import build_audit_workflow, format_audit
 def _die(msg: str, code: int = 1) -> None:
     print(msg, file=sys.stderr)
     raise SystemExit(code)
+
+
+def cmd_commands(args: argparse.Namespace) -> None:
+    """Print all subcommands with help text and example one-liners."""
+    del args  # unused
+    print("game-dev-crew — subcommands\n")
+    for spec in SUBCOMMANDS:
+        print(f"  {spec.name}")
+        print(f"    {spec.help}")
+        print(f"    e.g. {spec.example}\n")
 
 
 def cmd_audit_flow(args: argparse.Namespace) -> None:
@@ -53,6 +66,8 @@ def cmd_specialists(args: argparse.Namespace) -> None:
     load_env()
     if not args.dry_run and not os.environ.get("OPENROUTER_API_KEY"):
         _die("OPENROUTER_API_KEY is not set.")
+    if not args.dry_run:
+        maybe_setup_tracing(make_agent_db())
     team = build_specialists_team(repo_root())
     if args.dry_run:
         print("Dry run: specialists team:", team.name)
@@ -65,20 +80,14 @@ def cmd_sqlite_status(args: argparse.Namespace) -> None:
     """Print which SQLite file is used and row counts (definitions vs chat sessions)."""
     import sqlite3
 
-    import game_dev_crew.config as cfg
-
     load_env()
     path = memory_sqlite_file()
     raw_mem = os.environ.get("AGNO_MEMORY_DB", "")
     raw_sqlite_path = os.environ.get("AGNO_MEMORY_SQLITE_PATH", "")
 
-    print("game_dev_crew.config loaded from:", cfg.__file__)
-    print("Package data dir (_AGNO_DIR):", cfg._AGNO_DIR)
     print("AGNO_MEMORY_DB (effective env):", repr(raw_mem.strip() or "(empty → default sqlite)"))
     print("AGNO_MEMORY_SQLITE_PATH (env):", repr(raw_sqlite_path.strip() or "(unset → project .agno_memory.sqlite)"))
     print("Resolved main SQLite file:", path)
-    db_inst = make_agent_db()
-    print("make_agent_db():", type(db_inst).__name__ if db_inst else None)
 
     if not path.is_file():
         print("\nFile does not exist yet. Run: game-dev-crew sync-components")
@@ -109,8 +118,8 @@ def cmd_sqlite_status(args: argparse.Namespace) -> None:
             for cid, ctype in rows:
                 print(f"    {ctype:12}  {cid}")
         print(
-            "\nNote: Agno Studio may only list agents you created in the Studio UI. "
-            "Code-defined crew agents are in the agno_components table (above)."
+            "\nNote: Agno Studio’s cloud agent list is separate from this table; "
+            "crew definitions live in agno_components."
         )
     finally:
         con.close()
@@ -129,11 +138,11 @@ def cmd_sync_components(args: argparse.Namespace) -> None:
     db = make_agent_db()
     if db is None:
         _die(
-            "SQLite do AgentOS está desligado (make_agent_db() == None).\n"
-            "- No .env: AGNO_MEMORY_DB=sqlite ou omita (default sqlite).\n"
-            "- Se a shell exporta AGNO_MEMORY_DB=none, faça: unset AGNO_MEMORY_DB\n"
-            "  (python-dotenv não sobrepõe variáveis já definidas na shell).\n"
-            f"- Caminho do ficheiro quando ativo: {memory_sqlite_file()}"
+            "AgentOS SQLite is disabled (make_agent_db() returned None).\n"
+            "- In .env: set AGNO_MEMORY_DB=sqlite or omit it (default is sqlite).\n"
+            "- If your shell exports AGNO_MEMORY_DB=none, run: unset AGNO_MEMORY_DB\n"
+            "  (python-dotenv does not override variables already set in the shell).\n"
+            f"- SQLite file path when enabled: {memory_sqlite_file()}"
         )
     kb = build_game_dev_knowledge(db)
     if kb is not None:
@@ -151,9 +160,9 @@ def cmd_sync_components(args: argparse.Namespace) -> None:
         teams=teams,
         workflow=workflows[0],
     ):
-        _die("persist_code_defined_components falhou (BaseDb ausente).")
+        _die("persist_code_defined_components failed (missing BaseDb).")
     path = memory_sqlite_file()
-    print("Componentes gravados em:", path)
+    print("Components written to:", path)
     import sqlite3
 
     con = sqlite3.connect(str(path))
@@ -172,10 +181,12 @@ def cmd_sync_components(args: argparse.Namespace) -> None:
         ).fetchall()
     finally:
         con.close()
-    print("Verification from table agno_components (do not confuse with agno_sessions):")
-    print("  agents:   ", ", ".join(r[0] for r in agents_db) or "(none)")
-    print("  teams:    ", ", ".join(r[0] for r in teams_db) or "(none)")
-    print("  workflows:", ", ".join(r[0] for r in wf_db) or "(none)")
+    print(
+        "Verification (agno_components): "
+        f"agents={', '.join(r[0] for r in agents_db) or '(none)'}; "
+        f"teams={', '.join(r[0] for r in teams_db) or '(none)'}; "
+        f"workflows={', '.join(r[0] for r in wf_db) or '(none)'}"
+    )
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -190,26 +201,27 @@ def cmd_serve(args: argparse.Namespace) -> None:
             f"Got: {root}"
         )
 
-    if make_agent_db() is None:
+    db_serve = make_agent_db()
+    if db_serve is None:
         print(
-            "game-dev-crew serve: SQLite do AgentOS está desligado — definições de agentes/equipas "
-            "não serão gravadas (AGNO_MEMORY_DB=none na shell ou no .env; load_dotenv não sobrepõe a shell).",
+            "game-dev-crew serve: AgentOS SQLite is disabled — agent/team definitions will not be "
+            "persisted (AGNO_MEMORY_DB=none in shell or .env; load_dotenv does not override the shell).",
             file=sys.stderr,
         )
-        print(f"                  Caminho usado quando o SQLite está ativo: {memory_sqlite_file()}", file=sys.stderr)
+        print(f"                  SQLite path when enabled: {memory_sqlite_file()}", file=sys.stderr)
 
     connect_host = "127.0.0.1" if args.host in ("0.0.0.0", "::", "[::]") else args.host
     base_url = f"http://{connect_host}:{args.port}"
+    trace_hint = ""
+    if tracing_enabled() and db_serve is not None:
+        trace_hint = f"• Traces: GET {base_url}/traces\n"
     print(
-        "\n--- Agno Studio (os.agno.com) ---\n"
-        f"• Add OS → Local → {base_url} (while this server is running).\n"
-        "• The page https://os.agno.com/studio/agents lists **cloud account** agents (e.g. “Test”), "
-        "not your Game Dev Crew from this repo.\n"
-        "• Use your **connected local OS** in Studio (chat / run) to reach auditor, storytelling, … "
-        "from /config on this server.\n"
-        "• GET /components lists all rows in agno_components (agents, teams, workflows). "
-        "GET /system/db-components is the same data without AgentOS auth (debug).\n"
-        f"• Check: curl -s {base_url}/config | python3 -c "
+        "\n--- Agno Studio ---\n"
+        f"• Local OS: {base_url}\n"
+        "• Cloud https://os.agno.com/studio/agents is account agents, not this crew.\n"
+        "• GET /components and GET /system/db-components list saved definitions.\n"
+        f"{trace_hint}"
+        f"• Agent ids: curl -s {base_url}/config | python3 -c "
         "\"import json,sys; d=json.load(sys.stdin); print([a.get('id') for a in d.get('agents',[])])\"\n",
         file=sys.stderr,
     )
@@ -227,6 +239,8 @@ def cmd_crew(args: argparse.Namespace) -> None:
     load_env()
     if not args.dry_run and not os.environ.get("OPENROUTER_API_KEY"):
         _die("OPENROUTER_API_KEY is not set.")
+    if not args.dry_run:
+        maybe_setup_tracing(make_agent_db())
     team = build_game_dev_crew_team(repo_root())
     if args.dry_run:
         print("Dry run: full crew team:", team.name)
@@ -239,7 +253,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Agno Game Dev Crew (OpenRouter, AuditFlow)")
     sub = p.add_subparsers(dest="command", required=True)
 
-    af = sub.add_parser("audit-flow", help="Run AuditFlow (auditor → specialists → senior → reviewer, rework loop)")
+    af = sub.add_parser("audit-flow", help=subcommand_help("audit-flow"))
     af.add_argument(
         "prompt",
         nargs="?",
@@ -255,35 +269,32 @@ def build_parser() -> argparse.ArgumentParser:
     af.add_argument("--dry-run", action="store_true", help="Validate wiring only; no API calls")
     af.set_defaults(func=cmd_audit_flow)
 
-    sp = sub.add_parser("specialists", help="Route-only team (storytelling, ui_ux, game_design)")
+    sp = sub.add_parser("specialists", help=subcommand_help("specialists"))
     sp.add_argument("prompt", help="Question for the specialists team")
     sp.add_argument("--stream", action="store_true", help="Stream tokens to stdout")
     sp.add_argument("--dry-run", action="store_true")
     sp.set_defaults(func=cmd_specialists)
 
-    cr = sub.add_parser("crew", help="Full coordinated team (all agents)")
+    cr = sub.add_parser("crew", help=subcommand_help("crew"))
     cr.add_argument("prompt", help="Question for the Game Dev Crew")
     cr.add_argument("--stream", action="store_true")
     cr.add_argument("--dry-run", action="store_true")
     cr.set_defaults(func=cmd_crew)
 
-    sv = sub.add_parser("serve", help="Run AgentOS API (FastAPI) for agents, teams, and AuditFlow")
+    sv = sub.add_parser("serve", help=subcommand_help("serve"))
     sv.add_argument("--host", default="127.0.0.1", help="Bind address (default 127.0.0.1)")
     sv.add_argument("--port", type=int, default=8000, help="Port (default 8000)")
     sv.add_argument("--reload", action="store_true", help="Dev auto-reload on code changes")
     sv.set_defaults(func=cmd_serve)
 
-    sy = sub.add_parser(
-        "sync-components",
-        help="Gravar agentes, equipas e AuditFlow no SQLite (sem levantar o servidor)",
-    )
+    sy = sub.add_parser("sync-components", help=subcommand_help("sync-components"))
     sy.set_defaults(func=cmd_sync_components)
 
-    st = sub.add_parser(
-        "sqlite-status",
-        help="Mostrar ficheiro SQLite resolvido e contagens (definições vs sessões)",
-    )
+    st = sub.add_parser("sqlite-status", help=subcommand_help("sqlite-status"))
     st.set_defaults(func=cmd_sqlite_status)
+
+    lc = sub.add_parser("commands", help=subcommand_help("commands"))
+    lc.set_defaults(func=cmd_commands)
 
     return p
 

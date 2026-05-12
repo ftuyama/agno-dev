@@ -19,6 +19,11 @@ dependencies = [
   "fastembed>=0.4.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+]
+
 [project.scripts]
 game-dev-crew = "game_dev_crew.cli:main"
 
@@ -28,3 +33,7 @@ include = ["game_dev_crew*"]
 
 [tool.setuptools.package-data]
 game_dev_crew = ["instructions/*.md", "knowledge_seed/*.md", "agent_os_config.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

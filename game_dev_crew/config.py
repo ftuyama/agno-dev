@@ -51,6 +51,20 @@ def audit_flow_max_iterations() -> int:
         return 4
 
 
+def tracing_enabled() -> bool:
+    """When true, call ``agno.tracing.setup_tracing`` so runs export spans to the Agno DB (requires SQLite)."""
+    load_env()
+    raw = os.environ.get("AGNO_TRACING", "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    mem = os.environ.get("AGNO_MEMORY_DB", "").strip().lower()
+    if mem in ("none", "off", "false", "0"):
+        return False
+    return True
+
+
 def validate_scenes_tool_enabled() -> bool:
     load_env()
     return os.environ.get("ENABLE_VALIDATE_SCENES_TOOL", "").lower() in ("1", "true", "yes")

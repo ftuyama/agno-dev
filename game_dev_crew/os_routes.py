@@ -1,16 +1,9 @@
-"""Routes to list ``agno_components`` as stored in SQLite.
-
-Upstream AgentOS ``GET /components`` excludes component IDs owned by the in-process ``Registry``
-(code-defined agents and teams). This app **replaces** that handler so ``GET /components`` lists
-every row in ``agno_components`` (agents, teams, workflows), matching Studio expectations.
-
-``GET /system/db-components`` remains as an explicit debug alias (same query params, no auth quirks).
-"""
+"""AgentOS extras: full ``GET /components`` listing and ``GET /system/db-components``."""
 
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from agno.db.base import BaseDb, ComponentType as DbComponentType
 from agno.os.auth import get_authentication_dependency
@@ -36,11 +29,28 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
 
-def replace_agentos_components_list_route(app: "FastAPI", db: BaseDb) -> None:
-    """Swap AgentOS ``list_components`` for one that does not exclude registry-backed IDs."""
+def _list_components_slice(
+    db: BaseDb,
+    *,
+    component_type: Optional[DbComponentType],
+    page: int,
+    limit: int,
+) -> tuple[list[dict[str, Any]], int, float]:
+    offset = (page - 1) * limit
+    t0 = time.time() * 1000
+    rows, total_count = db.list_components(
+        component_type=component_type,
+        limit=limit,
+        offset=offset,
+        exclude_component_ids=None,
+    )
+    return rows, total_count, round(time.time() * 1000 - t0, 2)
+
+
+def patch_agentos_components_list(app: "FastAPI", db: BaseDb) -> None:
+    """Swap AgentOS ``GET /components`` so SQLite lists registry agents and teams too."""
     settings = AgnoAPISettings()
-    new_routes: list = []
-    removed = False
+    kept: list[Any] = []
     for route in app.router.routes:
         if (
             isinstance(route, APIRoute)
@@ -48,13 +58,12 @@ def replace_agentos_components_list_route(app: "FastAPI", db: BaseDb) -> None:
             and route.path == "/components"
             and "GET" in route.methods
         ):
-            removed = True
             continue
-        new_routes.append(route)
-    if not removed:
+        kept.append(route)
+    if len(kept) == len(app.router.routes):
         return
 
-    app.router.routes = new_routes
+    app.router.routes = kept
 
     router = APIRouter(
         dependencies=[Depends(get_authentication_dependency(settings))],
@@ -76,10 +85,7 @@ def replace_agentos_components_list_route(app: "FastAPI", db: BaseDb) -> None:
         name="list_components",
         operation_id="list_components",
         summary="List Components",
-        description=(
-            "Paginated components from SQLite, including code-defined agents and teams "
-            "(no registry ID exclusion)."
-        ),
+        description="Paginated rows from ``agno_components`` (agents, teams, workflows).",
     )
     async def list_components(
         component_type: Optional[ComponentType] = Query(
@@ -89,13 +95,9 @@ def replace_agentos_components_list_route(app: "FastAPI", db: BaseDb) -> None:
         limit: int = Query(20, ge=1, le=100, description="Items per page"),
     ) -> PaginatedResponse[ComponentResponse]:
         try:
-            start_time_ms = time.time() * 1000
-            offset = (page - 1) * limit
-            components, total_count = db.list_components(
-                component_type=DbComponentType(component_type.value) if component_type else None,
-                limit=limit,
-                offset=offset,
-                exclude_component_ids=None,
+            ct = DbComponentType(component_type.value) if component_type else None
+            components, total_count, search_ms = _list_components_slice(
+                db, component_type=ct, page=page, limit=limit
             )
             total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
             return PaginatedResponse(
@@ -105,7 +107,7 @@ def replace_agentos_components_list_route(app: "FastAPI", db: BaseDb) -> None:
                     limit=limit,
                     total_pages=total_pages,
                     total_count=total_count,
-                    search_time_ms=round(time.time() * 1000 - start_time_ms, 2),
+                    search_time_ms=search_ms,
                 ),
             )
         except Exception as e:
@@ -115,25 +117,19 @@ def replace_agentos_components_list_route(app: "FastAPI", db: BaseDb) -> None:
     app.include_router(router)
 
 
-def attach_raw_db_components_routes(app: "FastAPI") -> None:
-    router = APIRouter(prefix="/system", tags=["Database (debug)"])
+def attach_system_components_routes(app: "FastAPI") -> None:
+    router = APIRouter(prefix="/system", tags=["System"])
 
     @router.get(
         "/db-components",
-        summary="List SQLite agno_components (debug alias)",
-        description=(
-            "Same pagination and rows as ``GET /components`` on this server (all agent/team/workflow "
-            "rows in ``agno_components``). Unauthenticated; use for quick DB inspection."
-        ),
+        summary="List agno_components",
+        description="Same shape as ``GET /components`` on this server; no auth dependency.",
     )
     def list_db_components(
-        component_type: Optional[str] = Query(
-            None,
-            description="Filter: agent, team, or workflow",
-        ),
+        component_type: Optional[str] = Query(None, description="Filter: agent, team, or workflow"),
         page: int = Query(1, ge=1),
         limit: int = Query(20, ge=1, le=100),
-    ) -> dict:
+    ) -> dict[str, Any]:
         load_env()
         db = make_agent_db()
         if db is None or not isinstance(db, BaseDb):
@@ -158,13 +154,8 @@ def attach_raw_db_components_routes(app: "FastAPI") -> None:
                     detail="component_type must be agent, team, or workflow",
                 ) from e
 
-        offset = (page - 1) * limit
-        t0 = time.time() * 1000
-        rows, total_count = db.list_components(
-            component_type=ct,
-            limit=limit,
-            offset=offset,
-            exclude_component_ids=None,
+        rows, total_count, search_ms = _list_components_slice(
+            db, component_type=ct, page=page, limit=limit
         )
         total_pages = (total_count + limit - 1) // limit if limit else 0
         return {
@@ -174,7 +165,7 @@ def attach_raw_db_components_routes(app: "FastAPI") -> None:
                 "limit": limit,
                 "total_pages": total_pages,
                 "total_count": total_count,
-                "search_time_ms": round(time.time() * 1000 - t0, 2),
+                "search_time_ms": search_ms,
             },
         }
 

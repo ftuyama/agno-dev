@@ -1,4 +1,4 @@
-"""Which tools each agent gets (Auditor/Senior: read + glob + optional shell; Reviewer: optional validate)."""
+"""Crew toolkits: one shared set for all agents (role-specific lists can split out later)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from game_dev_crew.tools.validate_scenes import make_run_validate_scenes_tool
 
 
 def repo_probe_tools(repo_root: Path) -> list:
-    """Shared kit: read files, glob paths, and optionally allowlisted npm at repo root."""
+    """Read files, glob paths, and optionally allowlisted shell at repo root."""
     tools: list = [make_read_repo_file_tool(repo_root), make_glob_repo_tool(repo_root)]
     if repo_shell_tools_enabled():
         tools.append(make_execute_command_tool(repo_root))
@@ -20,15 +20,15 @@ def repo_probe_tools(repo_root: Path) -> list:
     return tools
 
 
-def auditor_tools(repo_root: Path) -> list:
-    return repo_probe_tools(repo_root)
-
-
-def senior_developer_tools(repo_root: Path) -> list:
-    return repo_probe_tools(repo_root)
-
-
-def reviewer_tools(repo_root: Path) -> list:
+def crew_tools(repo_root: Path) -> list:
+    """Full crew toolset: repo probe plus optional validate:scenes (every agent gets the same list)."""
+    tools = repo_probe_tools(repo_root)
     if validate_scenes_tool_enabled():
-        return [make_run_validate_scenes_tool(repo_root)]
-    return []
+        tools.append(make_run_validate_scenes_tool(repo_root))
+    return tools
+
+
+# Aliases for future per-role overrides; today all map to ``crew_tools``.
+auditor_tools = crew_tools
+senior_developer_tools = crew_tools
+reviewer_tools = crew_tools

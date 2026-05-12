@@ -8,10 +8,11 @@ from agno.db.base import BaseDb
 from agno.os import AgentOS
 
 from game_dev_crew.component_persistence import persist_code_defined_components
-from game_dev_crew.config import load_env, make_agent_db, repo_root
+from game_dev_crew.config import load_env, make_agent_db, repo_root, tracing_enabled
 from game_dev_crew.crew.agents import build_agents
-from game_dev_crew.knowledge import build_game_dev_knowledge, seed_default_knowledge
 from game_dev_crew.crew.teams import build_game_dev_crew_team, build_specialists_team
+from game_dev_crew.knowledge import build_game_dev_knowledge, seed_default_knowledge
+from game_dev_crew.os_routes import attach_system_components_routes, patch_agentos_components_list
 from game_dev_crew.workflow.audit_flow import build_audit_workflow
 
 _AGENT_OS_CONFIG = Path(__file__).resolve().parent / "agent_os_config.yaml"
@@ -48,16 +49,12 @@ def build_app():
         workflows=workflows,
         knowledge=[kb] if kb is not None else None,
         config=str(_AGENT_OS_CONFIG),
+        tracing=tracing_enabled(),
     )
     app = agent_os.get_app()
-    from game_dev_crew.os_db_debug_router import (
-        attach_raw_db_components_routes,
-        replace_agentos_components_list_route,
-    )
-
     if db is not None and isinstance(db, BaseDb):
-        replace_agentos_components_list_route(app, db)
-    attach_raw_db_components_routes(app)
+        patch_agentos_components_list(app, db)
+    attach_system_components_routes(app)
     return app
 
 

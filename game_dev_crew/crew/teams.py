@@ -21,7 +21,16 @@ def build_specialists_team(repo_root: Path, game_knowledge: Optional[KnowledgePr
     db = make_agent_db()
     mem_kw: dict[str, Any] = {}
     if db is not None:
-        mem_kw = {"db": db, "update_memory_on_run": True}
+        mem_kw = {
+            "db": db,
+            "update_memory_on_run": True,
+            "enable_agentic_memory": True,
+        }
+    coordination_kw = dict(
+        share_member_interactions=True,
+        add_team_history_to_members=True,
+        get_member_information_tool=True,
+    )
     return Team(
         id="game-dev-specialists",
         name="Game Dev Specialists",
@@ -35,6 +44,7 @@ def build_specialists_team(repo_root: Path, game_knowledge: Optional[KnowledgePr
         ],
         instructions=[load_instruction("team_leader")],
         metadata=dict(TEAMS_PY_METADATA),
+        **coordination_kw,
         **mem_kw,
     )
 
@@ -46,7 +56,16 @@ def build_game_dev_crew_team(repo_root: Path, game_knowledge: Optional[Knowledge
     db = make_agent_db()
     mem_kw: dict[str, Any] = {}
     if db is not None:
-        mem_kw = {"db": db, "update_memory_on_run": True}
+        mem_kw = {
+            "db": db,
+            "update_memory_on_run": True,
+            "enable_agentic_memory": True,
+        }
+    coordination_kw = dict(
+        share_member_interactions=True,
+        add_team_history_to_members=True,
+        get_member_information_tool=True,
+    )
     return Team(
         id="game-dev-crew",
         name="Game Dev Crew",
@@ -63,5 +82,6 @@ def build_game_dev_crew_team(repo_root: Path, game_knowledge: Optional[Knowledge
         ],
         instructions=[load_instruction("team_leader")],
         metadata=dict(TEAMS_PY_METADATA),
+        **coordination_kw,
         **mem_kw,
     )

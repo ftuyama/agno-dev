@@ -13,6 +13,7 @@ from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 
 from game_dev_crew.config import audit_flow_max_iterations, make_agent_db, repo_root
+from game_dev_crew.tracing import maybe_setup_tracing
 from game_dev_crew.crew.agents import build_agents
 from game_dev_crew.workflow.reviewer_parse import parse_reviewer_output
 
@@ -253,6 +254,7 @@ def run_audit_flow(
     session_state: dict[str, Any] | None = None,
 ) -> Any:
     """Run AuditFlow synchronously; returns ``WorkflowRunOutput``."""
+    maybe_setup_tracing(make_agent_db())
     wf = build_audit_workflow(repo_root_arg=repo_root_arg, max_iterations=max_iterations)
     state = session_state if session_state is not None else {}
     return wf.run(input=user_prompt, session_state=state, add_session_state_to_context=True)
