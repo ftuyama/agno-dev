@@ -48,7 +48,7 @@ def _run_allowlisted_npm(repo_root: Path, argv: list[str]) -> str:
         return (
             "execute_command/bash: only allowlisted commands are permitted. "
             f"Use: npm run <script> with script one of: {allowed}. "
-            "Example: npm run validate:scenes -- --campaign calvario"
+            "Example: npm run validate:scenes -- --campaign <your-campaign>"
         )
 
     npm = shutil.which("npm")
@@ -89,7 +89,7 @@ def make_execute_command_tool(repo_root: Path):
 
         Examples:
             ``npm run test``
-            ``npm run validate:scenes -- --campaign calvario``
+            ``npm run validate:scenes -- --campaign <your-campaign>``
 
         Returns:
             Combined stdout/stderr with exit_code= prefix.

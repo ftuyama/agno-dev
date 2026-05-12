@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import Any
 
 from game_dev_crew.cli_commands import SUBCOMMANDS, subcommand_help
 from game_dev_crew.config import (
@@ -17,7 +18,19 @@ from game_dev_crew.config import (
 )
 from game_dev_crew.tracing import maybe_setup_tracing
 from game_dev_crew.crew.teams import build_game_dev_crew_team, build_specialists_team
+from game_dev_crew.knowledge import build_game_dev_knowledge, seed_default_knowledge
 from game_dev_crew.workflow.audit_flow import build_audit_workflow, format_audit_cli_report, run_audit_flow
+from game_dev_crew.workflow.scene_generation_flow import (
+    build_scene_generation_workflow,
+    format_scene_generation_cli_report,
+    run_scene_generation_flow,
+)
+from game_dev_crew.workflow.git_isolation import (
+    GitIsolationError,
+    current_branch,
+    ensure_clean_tree,
+    summarize_diff,
+)
 
 
 def _die(msg: str, code: int = 1) -> None:
@@ -44,8 +57,17 @@ def cmd_audit_flow(args: argparse.Namespace) -> None:
             f"Got: {root}"
         )
 
+    db = make_agent_db()
+    kb = build_game_dev_knowledge(db)
+    if kb is not None:
+        seed_default_knowledge(kb)
+
     if args.dry_run:
-        wf = build_audit_workflow(repo_root_arg=root, max_iterations=args.max_iterations)
+        wf = build_audit_workflow(
+            repo_root_arg=root,
+            max_iterations=args.max_iterations,
+            game_knowledge=kb,
+        )
         print("Dry run: workflow built OK:", wf.name)
         print("Repo root:", root)
         print("Would run AuditFlow with prompt:\n", args.prompt)
@@ -54,12 +76,101 @@ def cmd_audit_flow(args: argparse.Namespace) -> None:
     if not os.environ.get("OPENROUTER_API_KEY"):
         _die("OPENROUTER_API_KEY is not set. Copy .env.example to .env or export the variable.")
 
+    try:
+        ensure_clean_tree(root)
+    except GitIsolationError as e:
+        _die(f"audit-flow: {e}")
+
+    try:
+        base_branch = current_branch(root) or "HEAD"
+    except GitIsolationError as e:
+        _die(f"audit-flow: {e}")
+
+    session_state: dict[str, Any] = {}
     out = run_audit_flow(
         args.prompt,
         repo_root_arg=root,
         max_iterations=args.max_iterations,
+        session_state=session_state,
+        game_knowledge=kb,
     )
     print(format_audit_cli_report(out))
+
+    audit_branch = session_state.get("audit_branch")
+    if audit_branch:
+        print("\n--- Audit branch ---")
+        print(f"Branch: {audit_branch} (based on {base_branch})")
+        diff = summarize_diff(root, audit_branch, base=base_branch)
+        if diff.strip():
+            print(diff)
+        else:
+            print("(no file changes committed)")
+        print(
+            "\nReview / merge / discard:\n"
+            f"  cd {root} && git diff {base_branch}...{audit_branch}\n"
+            f"  git checkout {base_branch} && git merge --no-ff {audit_branch}\n"
+            f"  git branch -D {audit_branch}"
+        )
+
+
+def cmd_scene_generation(args: argparse.Namespace) -> None:
+    load_env()
+    root = repo_root()
+    if not (root / "package.json").is_file():
+        _die(
+            "REPO_ROOT must point at the game repo (directory with package.json). "
+            f"Got: {root}"
+        )
+
+    db = make_agent_db()
+    kb = build_game_dev_knowledge(db)
+    if kb is not None:
+        seed_default_knowledge(kb)
+
+    if args.dry_run:
+        wf = build_scene_generation_workflow(repo_root_arg=root, game_knowledge=kb)
+        print("Dry run: workflow built OK:", wf.name, f"(id={wf.id})")
+        print("Repo root:", root)
+        print("Would run Scene generation with prompt:\n", args.prompt)
+        return
+
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        _die("OPENROUTER_API_KEY is not set. Copy .env.example to .env or export the variable.")
+
+    try:
+        ensure_clean_tree(root)
+    except GitIsolationError as e:
+        _die(f"scene-generation: {e}")
+
+    try:
+        base_branch = current_branch(root) or "HEAD"
+    except GitIsolationError as e:
+        _die(f"scene-generation: {e}")
+
+    session_state: dict[str, Any] = {}
+    out = run_scene_generation_flow(
+        args.prompt,
+        repo_root_arg=root,
+        session_state=session_state,
+        game_knowledge=kb,
+    )
+    print(format_scene_generation_cli_report(out))
+
+    gen_branch = session_state.get("scene_gen_branch")
+    if gen_branch:
+        print("\n--- Scene generation branch ---")
+        print(f"Branch: {gen_branch} (based on {base_branch})")
+        diff = summarize_diff(root, gen_branch, base=base_branch)
+        if diff.strip():
+            print(diff)
+        else:
+            print("(no file changes committed)")
+        print(
+            "\nReview / merge / discard:\n"
+            f"  cd {root} && git diff {base_branch}...{gen_branch}\n"
+            f"  git checkout {base_branch} && git merge --no-ff {gen_branch}\n"
+            f"  git branch -D {gen_branch}"
+        )
 
 
 def cmd_specialists(args: argparse.Namespace) -> None:
@@ -126,12 +237,10 @@ def cmd_sqlite_status(args: argparse.Namespace) -> None:
 
 
 def cmd_sync_components(args: argparse.Namespace) -> None:
-    """Persist agents, teams, and AuditFlow into SQLite (same logic as AgentOS startup)."""
+    """Persist agents, teams, and workflows into SQLite (same logic as AgentOS startup)."""
     from game_dev_crew.component_persistence import persist_code_defined_components
     from game_dev_crew.crew.agents import build_agents
     from game_dev_crew.crew.teams import build_game_dev_crew_team, build_specialists_team
-    from game_dev_crew.knowledge import build_game_dev_knowledge, seed_default_knowledge
-    from game_dev_crew.workflow.audit_flow import build_audit_workflow
 
     load_env()
     root = repo_root()
@@ -152,13 +261,16 @@ def cmd_sync_components(args: argparse.Namespace) -> None:
         build_specialists_team(root, game_knowledge=kb),
         build_game_dev_crew_team(root, game_knowledge=kb),
     ]
-    workflows = [build_audit_workflow(repo_root_arg=root, game_knowledge=kb)]
+    workflows = [
+        build_audit_workflow(repo_root_arg=root, game_knowledge=kb, db=db),
+        build_scene_generation_workflow(repo_root_arg=root, game_knowledge=kb, db=db),
+    ]
     if not persist_code_defined_components(
         root,
         db=db,
         agents=agents,
         teams=teams,
-        workflow=workflows[0],
+        workflows=workflows,
     ):
         _die("persist_code_defined_components failed (missing BaseDb).")
     path = memory_sqlite_file()
@@ -190,7 +302,7 @@ def cmd_sync_components(args: argparse.Namespace) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
-    """Run AgentOS (FastAPI) — same agents/teams/workflow as the CLI."""
+    """Run AgentOS (FastAPI) — same agents, teams, and workflows as sync-components."""
     import uvicorn
 
     load_env()
@@ -250,14 +362,14 @@ def cmd_crew(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Agno Game Dev Crew (OpenRouter, AuditFlow)")
+    p = argparse.ArgumentParser(description="Agno Game Dev Crew (OpenRouter, AuditFlow, Scene generation)")
     sub = p.add_subparsers(dest="command", required=True)
 
     af = sub.add_parser("audit-flow", help=subcommand_help("audit-flow"))
     af.add_argument(
         "prompt",
         nargs="?",
-        default="Audit the game codebase for risks and improvements; start with src/engine/ and src/campaigns/calvario/scenes/.",
+        default="Audit the game codebase for risks and improvements; start with src/engine/ and the primary campaign under src/campaigns/<your-campaign>/scenes/.",
         help="Scope / instructions for the audit",
     )
     af.add_argument(
@@ -268,6 +380,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     af.add_argument("--dry-run", action="store_true", help="Validate wiring only; no API calls")
     af.set_defaults(func=cmd_audit_flow)
+
+    sg = sub.add_parser("scene-generation", help=subcommand_help("scene-generation"))
+    sg.add_argument(
+        "prompt",
+        nargs="?",
+        default=(
+            "Generate a new batch of campaign scenes under src/campaigns/<your-campaign>/scenes/: "
+            "propose IDs, then add markdown + YAML consistent with the engine and existing act."
+        ),
+        help="Brief: theme, act, number of scenes, or links to design notes",
+    )
+    sg.add_argument("--dry-run", action="store_true", help="Validate wiring only; no API calls")
+    sg.set_defaults(func=cmd_scene_generation)
 
     sp = sub.add_parser("specialists", help=subcommand_help("specialists"))
     sp.add_argument("prompt", help="Question for the specialists team")

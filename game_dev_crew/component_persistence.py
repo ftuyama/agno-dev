@@ -23,17 +23,22 @@ def persist_code_defined_components(
     agents: Optional[Sequence["Agent"]] = None,
     teams: Optional[Sequence["Team"]] = None,
     workflow: Optional["Workflow"] = None,
+    workflows: Optional[Sequence["Workflow"]] = None,
 ) -> bool:
-    """Write agents, teams, and workflow into ``SqliteDb`` (Studio / component configs).
+    """Write agents, teams, and workflow(s) into ``SqliteDb`` (Studio / component configs).
 
     Prefer passing ``db`` plus the same ``agents`` / ``teams`` instances the app serves, so the
     DB matches runtime (e.g. Auditor with knowledge).
+
+    If ``workflows`` is set, each workflow is saved. Else if ``workflow`` is set, only that one.
+    Otherwise saves AuditFlow and Scene generation defaults.
 
     Returns ``True`` if saves ran, ``False`` if there is no sync ``BaseDb`` (memory DB off).
     """
     from game_dev_crew.crew.agents import build_agents
     from game_dev_crew.crew.teams import build_game_dev_crew_team, build_specialists_team
     from game_dev_crew.workflow.audit_flow import build_audit_workflow
+    from game_dev_crew.workflow.scene_generation_flow import build_scene_generation_workflow
 
     db_ = db if db is not None else make_agent_db()
     if db_ is None or not isinstance(db_, BaseDb):
@@ -56,8 +61,17 @@ def persist_code_defined_components(
         build_specialists_team(root).save()
         build_game_dev_crew_team(root).save()
 
-    wf = workflow if workflow is not None else build_audit_workflow(repo_root_arg=root)
-    if wf.db is not None:
-        wf.save()
+    if workflows is not None:
+        wf_list = list(workflows)
+    elif workflow is not None:
+        wf_list = [workflow]
+    else:
+        wf_list = [
+            build_audit_workflow(repo_root_arg=root),
+            build_scene_generation_workflow(repo_root_arg=root),
+        ]
+    for wf in wf_list:
+        if wf.db is not None:
+            wf.save()
 
     return True

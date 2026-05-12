@@ -11,7 +11,7 @@ def make_glob_repo_tool(repo_root: Path):
     def glob(pattern: str, limit: int = 400) -> str:
         """List **file** paths under the game repo matching a glob (relative to repo root).
 
-        Use POSIX-style patterns, e.g. ``src/**/*.ts``, ``src/campaigns/calvario/scenes/**/*.md``.
+        Use POSIX-style patterns, e.g. ``src/**/*.ts``, ``src/campaigns/<campaign>/scenes/**/*.md``.
         Does not follow symlinks for traversal control; only paths under the repo root are returned.
 
         Args:

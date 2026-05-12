@@ -19,6 +19,11 @@ SUBCOMMANDS: tuple[SubcommandSpec, ...] = (
         example='game-dev-crew audit-flow "Focus on src/engine/" --dry-run',
     ),
     SubcommandSpec(
+        name="scene-generation",
+        help="Run Scene generation (storytelling → game design → senior developer; git branch)",
+        example='game-dev-crew scene-generation "Add 3 scenes for act 2 escape beat" --dry-run',
+    ),
+    SubcommandSpec(
         name="specialists",
         help="Route-only team (storytelling, ui_ux, game_design)",
         example='game-dev-crew specialists "How can we improve combat UI?" --stream',
@@ -30,12 +35,12 @@ SUBCOMMANDS: tuple[SubcommandSpec, ...] = (
     ),
     SubcommandSpec(
         name="serve",
-        help="Run AgentOS API (FastAPI) for agents, teams, and AuditFlow",
+        help="Run AgentOS API (FastAPI) for agents, teams, AuditFlow, and Scene generation",
         example="game-dev-crew serve --host 127.0.0.1 --port 8000 --reload",
     ),
     SubcommandSpec(
         name="sync-components",
-        help="Persist agents, teams, and AuditFlow to SQLite (no HTTP server)",
+        help="Persist agents, teams, and workflows (AuditFlow + Scene generation) to SQLite",
         example="game-dev-crew sync-components",
     ),
     SubcommandSpec(

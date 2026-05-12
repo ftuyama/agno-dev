@@ -1,4 +1,4 @@
-"""AgentOS FastAPI app: exposes Game Dev Crew agents, teams, and AuditFlow."""
+"""AgentOS FastAPI app: exposes Game Dev Crew agents, teams, and workflows."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from game_dev_crew.crew.teams import build_game_dev_crew_team, build_specialists
 from game_dev_crew.knowledge import build_game_dev_knowledge, seed_default_knowledge
 from game_dev_crew.os_routes import attach_system_components_routes, patch_agentos_components_list
 from game_dev_crew.workflow.audit_flow import build_audit_workflow
+from game_dev_crew.workflow.scene_generation_flow import build_scene_generation_workflow
 
 _AGENT_OS_CONFIG = Path(__file__).resolve().parent / "agent_os_config.yaml"
 
@@ -31,18 +32,21 @@ def build_app():
         build_specialists_team(root, game_knowledge=kb),
         build_game_dev_crew_team(root, game_knowledge=kb),
     ]
-    workflows = [build_audit_workflow(repo_root_arg=root, game_knowledge=kb)]
+    workflows = [
+        build_audit_workflow(repo_root_arg=root, game_knowledge=kb, db=db),
+        build_scene_generation_workflow(repo_root_arg=root, game_knowledge=kb, db=db),
+    ]
     persist_code_defined_components(
         root,
         db=db,
         agents=agents,
         teams=teams,
-        workflow=workflows[0],
+        workflows=workflows,
     )
     agent_os = AgentOS(
         id="agno-game-dev-crew",
         name="Agno Game Dev Crew",
-        description="Agents, teams, and AuditFlow for game/engine work (REPO_ROOT)",
+        description="Agents, teams, AuditFlow, and Scene generation for game/engine work (REPO_ROOT)",
         db=db,
         agents=agents,
         teams=teams,

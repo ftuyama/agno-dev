@@ -1,4 +1,11 @@
-"""AuditFlow: Agno Workflow + Loop with reviewer-driven rework."""
+"""AuditFlow: Agno Workflow + Loop with reviewer-driven rework.
+
+Each iteration runs the relevant agents, commits any write each one produces
+on the active audit branch, and then asks the reviewer to verify the patched
+tree (typically by running ``npm run test`` / ``validate:scenes``). The JSON
+envelope returned by every iteration step carries the branch name plus a
+``committed_by_agent`` map so the CLI can show what changed and who wrote it.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +22,11 @@ from agno.workflow.types import StepInput, StepOutput
 from game_dev_crew.config import audit_flow_max_iterations, make_agent_db, repo_root
 from game_dev_crew.tracing import maybe_setup_tracing
 from game_dev_crew.crew.agents import build_agents
+from game_dev_crew.workflow.git_isolation import (
+    changed_files_in_last_commit,
+    commit_after,
+    create_audit_branch,
+)
 from game_dev_crew.workflow.reviewer_parse import parse_reviewer_output
 
 
@@ -69,14 +81,54 @@ def format_audit_cli_report(workflow_run: Any) -> str:
     return "".join(parts)
 
 
+def _commit_agent_writes(
+    root: Path,
+    iteration_index: int,
+    agent_id: str,
+    session_state: dict[str, Any],
+    committed_by_agent: dict[str, dict[str, Any]],
+    *,
+    run_label: str = "audit-flow",
+) -> None:
+    """Commit any writes the just-finished agent produced; update session_state."""
+    try:
+        sha = commit_after(root, iteration_index, agent_id, run_label=run_label)
+    except Exception as e:  # pragma: no cover - git failures are rare and surface to user
+        session_state.setdefault("commit_errors", []).append(
+            {"iteration": iteration_index, "agent": agent_id, "error": str(e)}
+        )
+        return
+    if not sha:
+        return
+    files = changed_files_in_last_commit(root)
+    committed_by_agent[agent_id] = {"sha": sha, "files": list(files)}
+    bucket: list[str] = session_state.setdefault("changed_files", [])
+    for f in files:
+        if f and f not in bucket:
+            bucket.append(f)
+
+
+def _format_patched_block(committed_by_agent: dict[str, dict[str, Any]]) -> str:
+    if not committed_by_agent:
+        return "## Patched files this iteration\n(no agent writes this iteration)"
+    lines = ["## Patched files this iteration"]
+    for agent_id, info in committed_by_agent.items():
+        for path in info.get("files", []):
+            lines.append(f"- {path} (by {agent_id})")
+    return "\n".join(lines)
+
+
 def make_audit_iteration_executor(
     repo_root: Path, max_iterations: int, game_knowledge: Optional[KnowledgeProtocol] = None
 ):
     agents = build_agents(repo_root, game_knowledge=game_knowledge)
     specialist_keys = ("storytelling", "ui_ux", "game_design")
+    root = repo_root.resolve()
 
     def audit_iteration(step_input: StepInput, session_state: dict[str, Any]) -> StepOutput:
         session_state.setdefault("audit_outputs", {})
+        session_state.setdefault("changed_files", [])
+        session_state.setdefault("audit_branch", None)
 
         iteration_index = int(session_state.get("audit_loop_index", 0))
         first_pass = iteration_index == 0
@@ -95,12 +147,14 @@ def make_audit_iteration_executor(
 
         base_context = "\n\n".join(blocks)
         out: dict[str, str] = {}
+        committed_by_agent: dict[str, dict[str, Any]] = {}
 
         if first_pass or "auditor" in owners_set:
             msg = base_context + "\n\nRespond with prioritized audit findings for this scope."
             ro = agents["auditor"].run(msg)
             out["auditor"] = _run_output_text(ro)
             session_state["audit_outputs"]["auditor"] = out["auditor"]
+            _commit_agent_writes(root, iteration_index, "auditor", session_state, committed_by_agent)
         else:
             out["auditor"] = str(session_state["audit_outputs"].get("auditor", ""))
 
@@ -117,6 +171,7 @@ def make_audit_iteration_executor(
                 out[key] = _run_output_text(ro)
                 session_state["audit_outputs"][key] = out[key]
                 specialists_ran = True
+                _commit_agent_writes(root, iteration_index, key, session_state, committed_by_agent)
             else:
                 out[key] = str(session_state["audit_outputs"].get(key, ""))
 
@@ -135,15 +190,24 @@ def make_audit_iteration_executor(
                     "## Storytelling\n" + (out["storytelling"] or "")[:12000],
                     "## UI/UX\n" + (out["ui_ux"] or "")[:12000],
                     "## Game design\n" + (out["game_design"] or "")[:12000],
-                    "Produce implementation plan and textual patches only.",
+                    "Apply patches directly via apply_patch / write_repo_file when changes are warranted.",
                 ]
             )
             ro = agents["senior_developer"].run(senior_msg)
             out["senior_developer"] = _run_output_text(ro)
             session_state["audit_outputs"]["senior_developer"] = out["senior_developer"]
+            _commit_agent_writes(root, iteration_index, "senior_developer", session_state, committed_by_agent)
         else:
             out["senior_developer"] = str(session_state["audit_outputs"].get("senior_developer", ""))
 
+        patched_block = _format_patched_block(committed_by_agent)
+        verification_block = (
+            "## Verification expected\n"
+            "If any files were patched this iteration, run `execute_command(\"npm run test\")` "
+            "and, if scenes changed, call `run_validate_scenes`. Reject with a `- ❌ [<agent_id>]` "
+            "line citing the failing output, tagging the agent that committed the offending file "
+            "(see the (by <agent_id>) markers above)."
+        )
         reviewer_msg = "\n\n".join(
             [
                 base_context,
@@ -152,12 +216,15 @@ def make_audit_iteration_executor(
                 "## UI/UX\n" + (out["ui_ux"] or "")[:8000],
                 "## Game design\n" + (out["game_design"] or "")[:8000],
                 "## Senior developer\n" + (out["senior_developer"] or "")[:16000],
+                patched_block,
+                verification_block,
                 "Apply the format from your instructions (✅ / ❌ [owner] / STATUS: APPROVED).",
             ]
         )
         rro = agents["reviewer"].run(reviewer_msg)
         out["reviewer"] = _run_output_text(rro)
         session_state["audit_outputs"]["reviewer"] = out["reviewer"]
+        _commit_agent_writes(root, iteration_index, "reviewer", session_state, committed_by_agent)
 
         parsed = parse_reviewer_output(out["reviewer"])
         if parsed.approved:
@@ -186,6 +253,11 @@ def make_audit_iteration_executor(
             "loop_index": next_idx,
             "max_iterations": max_iterations,
             "forced_stop_max_iterations": bool(next_idx >= max_iterations and not parsed.approved),
+            "audit_branch": session_state.get("audit_branch"),
+            "committed_files": [
+                p for info in committed_by_agent.values() for p in info.get("files", [])
+            ],
+            "committed_by_agent": committed_by_agent,
         }
         return StepOutput(
             step_name="audit_iteration",
@@ -252,9 +324,24 @@ def run_audit_flow(
     repo_root_arg: Path | None = None,
     max_iterations: int | None = None,
     session_state: dict[str, Any] | None = None,
+    game_knowledge: Optional[KnowledgeProtocol] = None,
 ) -> Any:
-    """Run AuditFlow synchronously; returns ``WorkflowRunOutput``."""
+    """Run AuditFlow synchronously; returns ``WorkflowRunOutput``.
+
+    Creates a throwaway ``agno/audit-flow/<UTC-timestamp>`` branch (unless the
+    caller pre-populated ``session_state["audit_branch"]``) so every agent
+    commit lands in isolation off the current HEAD. Callers should usually
+    run :func:`game_dev_crew.workflow.git_isolation.ensure_clean_tree` first
+    (the CLI does this in ``cmd_audit_flow``).
+    """
     maybe_setup_tracing(make_agent_db())
-    wf = build_audit_workflow(repo_root_arg=repo_root_arg, max_iterations=max_iterations)
+    root = (repo_root_arg or repo_root()).resolve()
     state = session_state if session_state is not None else {}
+    if not state.get("audit_branch"):
+        state["audit_branch"] = create_audit_branch(root)
+    wf = build_audit_workflow(
+        repo_root_arg=root,
+        max_iterations=max_iterations,
+        game_knowledge=game_knowledge,
+    )
     return wf.run(input=user_prompt, session_state=state, add_session_state_to_context=True)

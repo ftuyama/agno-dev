@@ -25,8 +25,19 @@ cp .env.example .env
 | `AGNO_MEMORY_DB` | Default sqlite; `none` / `off` / `false` / `0` disables DB (shell wins over `.env` if already set). |
 | `AGNO_MEMORY_SQLITE_PATH` | SQLite file (default `.agno_memory.sqlite` in project root). |
 | `ENABLE_VALIDATE_SCENES_TOOL` | `true` enables `npm run validate:scenes` tooling where policy allows. |
+| `AGNO_KNOWLEDGE` | When not `none` / `off` / `false` / `0`, enables LanceDB + packaged seed doc for AgentOS Studio and optional Auditor RAG (requires `fastembed` + `lancedb`). See **Knowledge vs game repo** below. |
 
 More on SQLite, Studio, and HTTP routes: [docs/agentos-and-sqlite.md](docs/agentos-and-sqlite.md).
+
+## Knowledge vs game repo
+
+The indexed **Knowledge** base is only [`game_dev_crew/knowledge_seed/crew_overview.md`](game_dev_crew/knowledge_seed/crew_overview.md) (crew onboarding: what AuditFlow is, conventions). It is **not** your game’s scenes or TypeScript source. Anything factual about the game under **`REPO_ROOT`** must come from agent tools (`read_repo_file`, `glob`, allowlisted `npm run …`). Ingesting the game tree into RAG would be a separate, deliberate step.
+
+`game-dev-crew audit-flow` and `game-dev-crew serve` both attach the same optional **`game_knowledge`** to the **Auditor** when knowledge is enabled (wiring parity only; semantics above still apply).
+
+## Patches vs applying changes
+
+The crew (especially the senior developer) outputs **plans and textual patches** in model text. **Agents do not write files** in the game repo through tools ([`game_dev_crew/tools/policy.py`](game_dev_crew/tools/policy.py)). You or your editor apply edits. Closed-loop “apply patches automatically” would need new, explicitly scoped tooling.
 
 ## CLI
 

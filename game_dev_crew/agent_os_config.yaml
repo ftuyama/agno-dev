@@ -4,7 +4,7 @@ chat:
   quick_prompts:
     auditor:
       - "Audit risks under src/engine/ and summarize top findings."
-      - "Review src/campaigns/calvario/scenes/ for consistency and risk."
+      - "Review src/campaigns/<your-campaign>/scenes/ for consistency and risk."
       - "What should we verify before shipping the next scene batch?"
     storytelling:
       - "Improve pacing and branching for the current act."
@@ -31,8 +31,12 @@ chat:
       - "Which specialist should own this player-facing change?"
     game-dev-crew:
       - "Coordinate a full pass on engine vs UI boundaries."
-      - "Run a high-level audit scope for the calvario campaign."
+      - "Run a high-level audit scope for the primary campaign in REPO_ROOT."
     audit-flow:
-      - "Audit the game codebase; start with src/engine/ and calvario scenes."
+      - "Audit the game codebase; start with src/engine/ and campaign scenes."
       - "Focus audit on accessibility and UI copy."
       - "Deep dive act1 scenes only; cap rework iterations if needed."
+    scene-generation:
+      - "Generate a new scene batch for the primary campaign; align IDs with the repo tree."
+      - "Add branching scenes for act 2; keep PT-BR copy and English scene IDs."
+      - "Outline then implement three scenes under src/campaigns/<your-campaign>/scenes/."
